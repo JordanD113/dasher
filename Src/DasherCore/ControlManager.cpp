@@ -77,11 +77,11 @@ void CControlBase::ChangeScreen(CDasherScreen *pScreen) {
     templateQueue.pop_front();
     delete head->m_pLabel;
     head->m_pLabel = pScreen->MakeLabel(head->m_strLabel);
-    for (vector<NodeTemplate *>::iterator it = head->successors.begin(); it!=head->successors.end(); it++) {
-      if (!(*it)) continue; //an escape back to the alphabet, no label/successors here
-      if (allTemplates.find(*it)==allTemplates.end()) {
-        allTemplates.insert(*it);
-        templateQueue.push_back(*it);
+    for (auto child : head->successors) {
+      if (!child) continue; //an escape back to the alphabet, no label/successors here
+      if (allTemplates.find(child)==allTemplates.end()) {
+        allTemplates.insert(child);
+        templateQueue.push_back(child);
       }
     }
   }
@@ -98,6 +98,9 @@ CControlBase::NodeTemplate::~NodeTemplate() {
 CControlBase::CContNode::CContNode(int iOffset, int iColour, NodeTemplate *pTemplate, CControlBase *pMgr)
 : CDasherNode(iOffset, iColour, pTemplate->m_pLabel), m_pTemplate(pTemplate), m_pMgr(pMgr) {
 }
+double  CControlBase::CContNode::SpeedMul() {
+  return m_pMgr->GetBoolParameter(BP_SLOW_CONTROL_BOX) ? 0.5 : 1;
+}
 
 void CControlBase::CContNode::PopulateChildren() {
 
@@ -107,17 +110,17 @@ void CControlBase::CContNode::PopulateChildren() {
   unsigned int iLbnd(0), iIdx(0);
       int newOffset = m_pTemplate->calculateNewOffset(this, offset());
 
-  for (vector<NodeTemplate *>::iterator it = m_pTemplate->successors.begin(); it!=m_pTemplate->successors.end(); it++) {
+      for (auto child : m_pTemplate->successors) {
 
     const unsigned int iHbnd((++iIdx*CDasherModel::NORMALIZATION)/iNChildren);
 
-    if( *it == NULL ) {
+    if( child == NULL ) {
       // Escape back to alphabet
 
       pNewNode = m_pMgr->m_pNCManager->GetAlphabetManager()->GetRoot(this, false, newOffset + 1);
     }
     else {
-      pNewNode = new CContNode(newOffset, m_pMgr->getColour(*it, this), *it, m_pMgr);
+      pNewNode = new CContNode(newOffset, m_pMgr->getColour(child, this), child, m_pMgr);
     }
     pNewNode->Reparent(this, iLbnd, iHbnd);
     iLbnd=iHbnd;
@@ -133,7 +136,7 @@ void CControlBase::CContNode::Output() {
   m_pTemplate->happen(this);
 }
 
-const vector<CControlBase::NodeTemplate *> &CControlParser::parsedNodes() {
+const list<CControlBase::NodeTemplate *> &CControlParser::parsedNodes() {
   return m_vParsed;
 }
 
@@ -180,20 +183,20 @@ bool CControlParser::ParseFile(const string &strFileName, bool bUser) {
   namedNodes.clear();
   unresolvedRefs.clear();
   nodeStack.clear();
-  
+
   if (!AbstractXMLParser::ParseFile(strFileName, bUser)) return false;
   //resolve any forward references to nodes declared later
-  for (vector<pair<CControlBase::NodeTemplate**,string> >::iterator it=unresolvedRefs.begin(); it!=unresolvedRefs.end(); it++) {
-    map<string,CControlBase::NodeTemplate*>::iterator target = namedNodes.find(it->second);
+  for (auto ref : unresolvedRefs) {
+    auto target = namedNodes.find(ref.second);
     if (target != namedNodes.end())
-      *(it->first) = target->second;
+      *(ref.first) = target->second;
   }
   //somehow, need to clear out any refs that weren't resolved...???
   return true;
 }
 
 void CControlParser::XmlStartHandler(const XML_Char *name, const XML_Char **atts) {
-  vector<CControlBase::NodeTemplate *> &parent(nodeStack.empty() ? m_vParsed : nodeStack.back()->successors);
+  auto& parent(nodeStack.empty() ? m_vParsed : nodeStack.back()->successors);
   if (strcmp(name,"node")==0) {
     string label,nodeName; int color=-1;
     while (*atts) {
@@ -219,7 +222,7 @@ void CControlParser::XmlStartHandler(const XML_Char *name, const XML_Char **atts
         target=*(atts+1);
       atts+=2;
     }
-    map<string,CControlBase::NodeTemplate*>::iterator it=namedNodes.find(target);
+    auto it=namedNodes.find(target);
     if (it!=namedNodes.end())
       parent.push_back(it->second);
     else {
@@ -417,15 +420,7 @@ CControlManager::CControlManager(CSettingsUser *pCreateFrom, CNodeCreationManage
   m_actions["delete dist=paragraph forward=no"] = new Delete(false, EDIT_PARAGRAPH);
   m_actions["delete dist=page forward=no"] = new Delete(false, EDIT_PAGE);
   m_actions["delete dist=all forward=no"] = new Delete(false, EDIT_FILE);
-  auto id = GetStringParameter(SP_CONTROL_BOX_ID);
-  string fileName = "control.xml";
-  if (!id.empty())
-    fileName = "control." + id + ".xml";
-  m_pInterface->ScanFiles(this, fileName);
-
-  updateActions();
 }
-
 
 CControlBase::NodeTemplate *CControlManager::parseOther(const XML_Char *name, const XML_Char **atts) {
   if (strcmp(name,"root")==0) return GetRootTemplate();
@@ -486,5 +481,44 @@ void CControlManager::updateActions() {
     //hack to make ChangeScreen do something
     m_pScreen = NULL; //i.e. make it think the screen has changed
     ChangeScreen(pScreen);
+  }
+}
+
+CControlBoxIO::CControlBoxIO(CMessageDisplay *pMsgs) : AbstractXMLParser(pMsgs) {
+}
+CControlManager* CControlBoxIO::CreateControlManager(
+  const std::string& id, CSettingsUser *pCreateFrom, CNodeCreationManager *pNCManager, 
+  CDasherInterfaceBase *pInterface) const {
+  auto mgr = new CControlManager(pCreateFrom, pNCManager, pInterface);
+  auto it = m_controlFiles.find(id);
+  if (it != m_controlFiles.end())
+    mgr->ParseFile(it->second, true);
+  mgr->updateActions();
+  return mgr;
+}
+
+void CControlBoxIO::GetControlBoxes(std::vector < std::string > *pList) const {
+  for (auto id_filename : m_controlFiles)
+    pList->push_back(id_filename.first);
+}
+
+bool CControlBoxIO::ParseFile(const std::string &strFilename, bool bUser) {
+  m_filename = strFilename;
+  return AbstractXMLParser::ParseFile(strFilename, bUser);
+}
+
+void CControlBoxIO::XmlStartHandler(const XML_Char *name, const XML_Char **atts) {
+  if (strcmp(name, "control") == 0) {
+    string id;
+    while (*atts != 0) {
+      if (strcmp(*atts, "name") == 0) {
+        id = *(atts + 1);
+      }
+      atts += 2;
+    }
+    if (!isUser() && m_controlFiles.count(id))
+      return; // Ignore system files if that name already taken
+
+    m_controlFiles[id] = m_filename;
   }
 }

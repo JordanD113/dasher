@@ -60,6 +60,7 @@ CDasherWindow::CDasherWindow(const wstring& configName) : m_configName(configNam
   m_pSpeedAlphabetBar = 0;
   m_pSplitter = 0;
   m_pDasher = 0;
+  m_bSizeRestored = false;
 
   m_hIconSm = (HICON)LoadImage(WinHelper::hInstApp, (LPCTSTR)IDI_DASHER, IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
 
@@ -144,38 +145,31 @@ CDasherWindow::~CDasherWindow() {
 }
 
 void CDasherWindow::Show(int nCmdShow) {
-  if (!LoadWindowState())
-    ShowWindow(nCmdShow);
-}
 
-void CDasherWindow::SaveWindowState() const {
-  WINDOWPLACEMENT wp;
-  wp.length = sizeof(WINDOWPLACEMENT);
-
-  if (GetWindowPlacement(&wp)) {//function call succeeds
-    m_pAppSettings->SaveWindowPlacement(APP_SP_WINDOW_STATE, &wp, m_pSplitter->GetPos());
-  }
-}
-
-bool CDasherWindow::LoadWindowState() {
-  WINDOWPLACEMENT wp;
-  int splitterPos = -1;
-  if (m_pAppSettings->LoadWindowPlacement(APP_SP_WINDOW_STATE, &wp, &splitterPos)) {
-    if (splitterPos != -1) {
-      m_pSplitter->SetPos(splitterPos);
-    }
-    if (SetWindowPlacement(&wp))
-      return true;
-  }
-  return false;
+    RECT r = {
+      m_pAppSettings->GetLongParameter(APP_LP_X),
+      m_pAppSettings->GetLongParameter(APP_LP_Y),
+      m_pAppSettings->GetLongParameter(APP_LP_SCREEN_WIDTH),
+      m_pAppSettings->GetLongParameter(APP_LP_SCREEN_HEIGHT),
+    };
+    r.bottom += r.top;
+    r.right += r.left;
+  MoveWindow(&r, false);
+  m_bSizeRestored = true;
+  if (m_pAppSettings->GetBoolParameter(APP_BP_FULL_SCREEN))
+    nCmdShow = SW_MAXIMIZE;
+  ShowWindow(nCmdShow);
 }
 
 void CDasherWindow::HandleParameterChange(int iParameter) {
   switch (iParameter) {
   case APP_BP_SHOW_TOOLBAR:
     m_pToolbar->ShowToolbar(m_pAppSettings->GetBoolParameter(APP_BP_SHOW_TOOLBAR));
+    Layout();
     break;
+
   case APP_BP_SHOW_STATUSBAR:
+  case APP_BP_MIRROR_LAYOUT:
   case APP_LP_STYLE:
     Layout();
     break;
@@ -212,7 +206,7 @@ LRESULT CDasherWindow::OnCommand(UINT message, WPARAM wParam, LPARAM lParam, BOO
 
   // Tell edit box if it has changed. It should know itself really, but this is easier
   // This shouldn't be here - it should be in the edit box class
-  if (((HWND)lParam == m_pEdit->GetHwnd()) && (HIWORD(wParam) == EN_CHANGE)) {
+  if (((HWND)lParam == *m_pEdit) && (HIWORD(wParam) == EN_CHANGE)) {
     m_pEdit->SetDirty();
     return 0;
   }
@@ -294,7 +288,7 @@ LRESULT CDasherWindow::OnDasherFocus(UINT message, WPARAM wParam, LPARAM lParam,
     return 0;
   }
 
-  ::SetFocus(m_pEdit->GetHwnd());
+  m_pEdit->SetFocus();
 
   // TODO: Is this obsolete?
   HWND *pHwnd((HWND *)lParam);
@@ -343,7 +337,6 @@ LRESULT CDasherWindow::OnInitMenuPopup(UINT message, WPARAM wParam, LPARAM lPara
 
 LRESULT CDasherWindow::OnClose(UINT message, WPARAM wParam, LPARAM lParam, BOOL& bHandled) {
   if (m_pEdit->ConfirmAndSaveIfNeeded()) {
-    SaveWindowState();
     DestroyWindow();
   }
   return 0;
@@ -413,6 +406,8 @@ void CDasherWindow::Layout() {
   m_pSpeedAlphabetBar->MoveWindow(0, Height - SpeedAlphabetHeight, Width, SpeedAlphabetHeight);
   m_pSpeedAlphabetBar->ShowWindow(SpeedAlphabetHeight ? SW_SHOW : SW_HIDE);
 
+  bool mirrorLayout = m_pAppSettings->GetBoolParameter(APP_BP_MIRROR_LAYOUT);
+
   int CanvasY = ToolbarHeight;
   int CanvasHeight = Height - SpeedAlphabetHeight - CanvasY;
 
@@ -425,25 +420,74 @@ void CDasherWindow::Layout() {
     break;
 
   case APP_STYLE_COMPOSE:
-    m_pDasher->Move(0, CanvasY, Width / 2, CanvasHeight);
-    m_pEdit->Move(Width / 2, CanvasY, Width - Width / 2, CanvasHeight);
+    if (mirrorLayout)
+    {
+      m_pDasher->Move(Width / 2, CanvasY, Width - Width / 2, CanvasHeight);
+      m_pEdit->Move(0, CanvasY, Width / 2, CanvasHeight);
+    }
+    else {
+      m_pDasher->Move(0, CanvasY, Width / 2, CanvasHeight);
+      m_pEdit->Move(Width / 2, CanvasY, Width - Width / 2, CanvasHeight);
+    }
     m_pEdit->ShowWindow(SW_SHOW);
     m_pSplitter->ShowWindow(SW_HIDE);
     break;
 
   default:
     int SplitterHeight = m_pSplitter->GetHeight();
-    int SplitterY = max(CanvasY + GetMinEditHeight(), m_pSplitter->GetPos());
-    SplitterY = min(SplitterY, CanvasY + CanvasHeight - GetMinCanvasHeight() - SplitterHeight);
-    int EditHeight = SplitterY - CanvasY;
-    int DasherY = SplitterY + SplitterHeight;
+    int EditHeight = m_pAppSettings->GetLongParameter(APP_LP_EDIT_SIZE);
 
-    m_pEdit->Move(0, CanvasY, Width, EditHeight);
-    m_pSplitter->Move(SplitterY, Width);
-    m_pDasher->Move(0, DasherY, Width, CanvasHeight - EditHeight - SplitterHeight);
+    if (mirrorLayout)
+    {
+      if (m_pSplitter->IsSizing())
+        EditHeight = CanvasY + CanvasHeight - SplitterHeight - m_pSplitter->GetPos();
+      int SplitterY = CanvasY + CanvasHeight - SplitterHeight - EditHeight;
+      SplitterY = min(SplitterY, CanvasY + CanvasHeight - GetMinEditHeight() - SplitterHeight);
+      SplitterY = max(CanvasY + GetMinCanvasHeight(), SplitterY);
+      EditHeight = CanvasY + CanvasHeight - SplitterY - SplitterHeight;
+      m_pDasher->Move(0, CanvasY, Width, SplitterY - CanvasY);
+      m_pSplitter->Move(SplitterY, Width);
+      m_pEdit->Move(0, SplitterY + SplitterHeight, Width, EditHeight);
+    }
+    else {
+      if (m_pSplitter->IsSizing())
+        EditHeight = m_pSplitter->GetPos() - CanvasY;
+      int SplitterY = CanvasY + EditHeight;
+      SplitterY = min(SplitterY, CanvasY + CanvasHeight - GetMinCanvasHeight() - SplitterHeight);
+      SplitterY = max(CanvasY + GetMinEditHeight(), SplitterY);
+      EditHeight = SplitterY - CanvasY;
+      m_pDasher->Move(0, SplitterY + SplitterHeight, Width, CanvasHeight - SplitterY - SplitterHeight);
+      m_pEdit->Move(0, CanvasY, Width, EditHeight);
+      m_pSplitter->Move(SplitterY, Width);
+    }
     m_pEdit->ShowWindow(SW_SHOW);
     m_pSplitter->ShowWindow(SW_SHOW);
+    if (m_bSizeRestored)
+      m_pAppSettings->SetLongParameter(APP_LP_EDIT_SIZE, EditHeight);
   }
+}
+
+LRESULT CDasherWindow::OnWindowPosChanged(UINT message, WPARAM wParam, LPARAM lParam, BOOL& bHandled)
+{
+  if (m_bSizeRestored) {
+    // Save window state
+    WINDOWPLACEMENT wp;
+    wp.length = sizeof(wp);
+    if (GetWindowPlacement(&wp)) {
+      bool normal = wp.showCmd != SW_SHOWMAXIMIZED && wp.showCmd != SW_SHOWMINIMIZED;
+      if (normal)
+      {
+        LPWINDOWPOS pwp = (LPWINDOWPOS)lParam;
+        m_pAppSettings->SetLongParameter(APP_LP_X, pwp->x);
+        m_pAppSettings->SetLongParameter(APP_LP_Y,pwp->y);
+        m_pAppSettings->SetLongParameter(APP_LP_SCREEN_WIDTH, pwp->cx);
+        m_pAppSettings->SetLongParameter(APP_LP_SCREEN_HEIGHT, pwp->cy);
+      }
+    m_pAppSettings->SetBoolParameter(APP_BP_FULL_SCREEN, wp.showCmd == SW_SHOWMAXIMIZED);
+    }
+  }
+  bHandled = false;
+  return 1;
 }
 
 void CDasherWindow::HandleWinEvent(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime) {

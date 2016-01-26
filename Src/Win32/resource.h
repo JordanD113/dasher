@@ -45,6 +45,7 @@
 #define IDC_BUTTON_PREFS2               1019
 #define IDC_THICKLINE                   1020
 #define IDC_COPYONSTOP                  1020
+#define IDC_MIRROR_LAYOUT               1021
 #define IDC_SPACE                       1036
 #define IDC_UNIFORMVAL                  1040
 #define IDC_CHECK3                      1071
@@ -87,6 +88,8 @@
 #define IDC_FONT_VLARGE                 1155
 #define IDC_CHECK4                      1156
 #define IDC_CHECK5                      1157
+#define IDC_CONTROLBOXES                1160
+#define IDC_FILE_ENCODING               1161
 #define ID_EDIT_SELECTALL               32775
 #define ID_HELP_CONTENTS                32776
 #define ID_EDIT_COPY_ALL                32798
@@ -104,9 +107,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        181
+#define _APS_NEXT_RESOURCE_VALUE        182
 #define _APS_NEXT_COMMAND_VALUE         32820
-#define _APS_NEXT_CONTROL_VALUE         1160
+#define _APS_NEXT_CONTROL_VALUE         1162
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
 #endif

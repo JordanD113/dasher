@@ -26,6 +26,7 @@
 #include "NodeManager.h"
 #include "NodeCreationManager.h"
 
+#include <list>
 #include <vector>
 #include <map>
 #include <fstream>
@@ -65,8 +66,8 @@ namespace Dasher {
       CContNode(int iOffset, int iColour, NodeTemplate *pTemplate, CControlBase *pMgr);
       CDasherScreen::Label *getLabel() { return m_pTemplate->m_pLabel; }
 
-      bool bShove() {return false;}
-      double SpeedMul() {return 0.5;}
+      bool bShove() override {return false;}
+      double SpeedMul() override;
       ///
       /// Provide children for the supplied node
       ///
@@ -93,7 +94,7 @@ namespace Dasher {
       virtual ~NodeTemplate();
       const std::string m_strLabel;
       const int m_iColour;
-      std::vector<NodeTemplate *> successors;
+      std::list<NodeTemplate *> successors;
 
     private:
       friend class CControlBase;
@@ -137,7 +138,6 @@ namespace Dasher {
   class CControlParser : public AbstractXMLParser {
   public:
     CControlParser(CMessageDisplay *pMsgs);
-  protected:
     ///Loads all node definitions from the specified filename. Note that
     /// system files will not be loaded if user files are (and user files will
     /// clear out any nodes from system ones). However, multiple system or multiple
@@ -147,9 +147,9 @@ namespace Dasher {
     /// \param bUser true if from user-specific location (takes priority over system)
     /// \return true if the file was opened successfully; false if not.
     bool ParseFile(const std::string &strFilename, bool bUser);
-    
+  protected:
     /// \return all node definitions that have been loaded by this CControlParser.
-    const vector<CControlBase::NodeTemplate*> &parsedNodes();
+    const list<CControlBase::NodeTemplate*> &parsedNodes();
     ///Subclasses may override to parse other nodes (besides "node", "ref" and "alph").
     ///The default implementation always returns NULL.
     /// \return A node template, if the name was recognised; NULL if not recognised.
@@ -167,14 +167,14 @@ namespace Dasher {
     void XmlEndHandler(const XML_Char *szName);
   private:
     ///all top-level parsed nodes
-    vector<CControlBase::NodeTemplate *> m_vParsed;
+    std::list<CControlBase::NodeTemplate *> m_vParsed;
     ///whether parsed nodes were from user file or not
     bool m_bUser;
 
     ///Following only used as temporary variables during parsing...
     map<string,CControlBase::NodeTemplate*> namedNodes;
-    vector<pair<CControlBase::NodeTemplate**,string> > unresolvedRefs;
-    vector<CControlBase::NodeTemplate*> nodeStack;
+    list<pair<CControlBase::NodeTemplate**,string> > unresolvedRefs;
+    list<CControlBase::NodeTemplate*> nodeStack;
   };
 
   ///subclass which we actually construct! Parses editing node definitions from a file,
@@ -206,11 +206,24 @@ namespace Dasher {
 
   private:
     map<string, CControlBase::Action*> m_actions;
-    ///group of state full actions (all/new/repeat/...)
+    ///group of statefull actions (all/new/repeat/...)
     SpeechHeader *m_pSpeech;
     CopyHeader *m_pCopy;
   };
   /// @}
+
+  class CControlBoxIO : public AbstractXMLParser {
+  public:
+    CControlBoxIO(CMessageDisplay *pMsgs);
+    void GetControlBoxes(std::vector < std::string > *pList) const;
+    CControlManager* CreateControlManager(const std::string& id, CSettingsUser *pCreateFrom, CNodeCreationManager *pNCManager, CDasherInterfaceBase *pInterface) const;
+    bool ParseFile(const std::string &strFilename, bool bUser) override;
+    void XmlStartHandler(const XML_Char *name, const XML_Char **atts) override;
+    void XmlEndHandler(const XML_Char *szName) override {};
+  private:
+    std::map<std::string, std::string> m_controlFiles;
+    std::string m_filename;
+  };
 }
 
 

@@ -160,6 +160,15 @@ void CAlphIO::XmlStartHandler(const XML_Char *name, const XML_Char **atts) {
 
   CData = "";
 
+  if (strcmp(name, "alphabets") == 0) {
+    while(*atts != 0) {
+      if(strcmp(*atts, "langcode") == 0) {
+        LanguageCode = *(atts+1);
+      }
+      atts += 2;
+    }
+  }
+
   if(strcmp(name, "alphabet") == 0) {
     InputInfo = new CAlphInfo();
     InputInfo->Mutable = isUser();
@@ -363,6 +372,10 @@ void Reverse(SGroupInfo *&pList) {
 
 void CAlphIO::XmlEndHandler(const XML_Char *name) {
 
+  if (strcmp(name, "alphabets") == 0) {
+    LanguageCode = "";
+  }
+
   if(strcmp(name, "alphabet") == 0) {
     Reverse(InputInfo->pChild);
 
@@ -379,6 +392,8 @@ void CAlphIO::XmlEndHandler(const XML_Char *name) {
       delete SpaceCharacter;
     }
 
+    InputInfo->LanguageCode = LanguageCode;
+
     InputInfo->iEnd = InputInfo->m_vCharacters.size()+1;
 
     //if (InputInfo->StartConvertCharacter.Text != "") InputInfo->iNumChildNodes++;
@@ -392,11 +407,6 @@ void CAlphIO::XmlEndHandler(const XML_Char *name) {
     return;
   }
   
-  if(strcmp(name, "langcode") == 0) {
-    InputInfo->LanguageCode = CData;
-    return;
-  }
-
   if(strcmp(name, "gamemode") == 0) {
     InputInfo->GameModeFile = CData;
     return;

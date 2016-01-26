@@ -38,42 +38,32 @@ using namespace WinLocalisation;
 using namespace WinUTF8;
 
 CEdit::CEdit(CAppSettings *pAppSettings) {
-  m_FontSize = 0;
-  m_FontName = "";
-  FileHandle = INVALID_HANDLE_VALUE;
   m_FilenameGUI = 0;
-  threadid = 0;
   
   // TODO: Check that this is all working okay (it quite probably
   // isn't). In the long term need specialised editor classes.
   targetwindow = 0;
-  textentry = false;
 
   m_pAppSettings = pAppSettings;
 
-  CodePage = GetUserCodePage();
-#ifndef _WIN32_WCE
+  UINT CodePage = GetUserCodePage();
   m_Font = GetCodePageFont(CodePage, 14);
-#endif
 }
 
 HWND CEdit::Create(HWND hParent, bool bNewWithDate) {
-  m_hWnd = CWindowImpl<CEdit>::Create(hParent, NULL, NULL, ES_NOHIDESEL | WS_CHILD | ES_MULTILINE | WS_VSCROLL | WS_VISIBLE, WS_EX_CLIENTEDGE);
+  CWindowImpl<CEdit>::Create(hParent, NULL, NULL, ES_NOHIDESEL | WS_CHILD | ES_MULTILINE | WS_VSCROLL | WS_VISIBLE, WS_EX_CLIENTEDGE);
 
   Tstring WindowTitle;
   WinLocalisation::GetResourceString(IDS_APP_TITLE, &WindowTitle);
   m_FilenameGUI = new CFilenameGUI(hParent, WindowTitle.c_str(), bNewWithDate);
   
-  return m_hWnd;
+  return *this;
 }
 
 
 CEdit::~CEdit() {
   DeleteObject(m_Font);
-
   delete m_FilenameGUI;
-  if(FileHandle != INVALID_HANDLE_VALUE)
-    CloseHandle(FileHandle);
 }
 
 void CEdit::Move(int x, int y, int Width, int Height) {
@@ -81,25 +71,47 @@ void CEdit::Move(int x, int y, int Width, int Height) {
 }
 
 bool CEdit::Save() {
-  if(FileHandle == INVALID_HANDLE_VALUE) {
-    if(m_filename == TEXT(""))
-      return false;
-    FileHandle = CreateFile(m_filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, (LPSECURITY_ATTRIBUTES) NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, (HANDLE) NULL);
+  if (m_filename == TEXT(""))
+    return false;
 
-    if(FileHandle == INVALID_HANDLE_VALUE)
-      return false;
-  }
-
-  // Truncate File to 0 bytes.
-  SetFilePointer(FileHandle, NULL, NULL, FILE_BEGIN);
-  SetEndOfFile(FileHandle);
+  HANDLE FileHandle = CreateFile(m_filename.c_str(), GENERIC_WRITE, 0, 
+    (LPSECURITY_ATTRIBUTES)NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, (HANDLE)NULL);
+  if (FileHandle == INVALID_HANDLE_VALUE)
+    return false;
 
   CString wideText;
   GetWindowText(wideText);
-  CStringA mbcsText(wideText);
+
   DWORD NumberOfBytesWritten;   // Used by WriteFile
-  WriteFile(FileHandle, mbcsText, mbcsText.GetLength(), &NumberOfBytesWritten, NULL);
-  // The file handle is not closed here. We keep a write-lock on the file to stop other programs confusing us.
+  switch (m_pAppSettings->GetLongParameter(APP_LP_FILE_ENCODING))
+  {
+  case Opts::UTF8: {
+    WriteFile(FileHandle, "\xEF\xBB\xBF", 3, &NumberOfBytesWritten, NULL);
+    string utf8Text = wstring_to_UTF8string(wideText);
+    WriteFile(FileHandle, utf8Text.c_str(), utf8Text.size(), &NumberOfBytesWritten, NULL);
+    break;
+  }
+  case Opts::UTF16LE: {
+    // TODO I am assuming this machine is LE. Do any windows (perhaps CE) machines run on BE?
+    WriteFile(FileHandle, "\xFF\xFE", 2, &NumberOfBytesWritten, NULL);
+    WriteFile(FileHandle, wideText.GetBuffer(), wideText.GetLength() * 2, &NumberOfBytesWritten, NULL);
+    break;
+  }
+  case Opts::UTF16BE: {
+    // TODO I am again assuming this machine is LE.
+    WriteFile(FileHandle, "\xFE\xFF", 2, &NumberOfBytesWritten, NULL);
+    for (unsigned int i = 0; i < wideText.GetLength(); i++) {
+      wideText.SetAt(i, _byteswap_ushort(wideText[i]));
+    }
+    WriteFile(FileHandle, wideText.GetBuffer(), wideText.GetLength() * 2, &NumberOfBytesWritten, NULL);
+    break;
+  }
+  default:
+    CStringA mbcsText(wideText); // converts wide string to current locale
+    WriteFile(FileHandle, mbcsText, mbcsText.GetLength(), &NumberOfBytesWritten, NULL);
+    break;
+  }
+  CloseHandle(FileHandle);
 
   m_FilenameGUI->SetDirty(false);
   m_dirty = false;
@@ -157,9 +169,6 @@ void CEdit::TNew(const Tstring &filename) {
     m_filename = m_FilenameGUI->New();
   else
     m_filename = filename;
-  if(FileHandle != INVALID_HANDLE_VALUE)
-    CloseHandle(FileHandle);
-  FileHandle = INVALID_HANDLE_VALUE;
   Clear();
 }
 
@@ -169,34 +178,61 @@ bool CEdit::TOpen(const Tstring &filename) {
   // Best thing is probably to trust any BOMs at the beginning of file, but otherwise
   // to believe menu. Unicode files don't necessarily have BOMs, especially from Unix.
 
-  HANDLE TmpHandle = CreateFile(filename.c_str(), GENERIC_READ | GENERIC_WRITE,
+  HANDLE FileHandle = CreateFile(filename.c_str(), GENERIC_READ,
                                 FILE_SHARE_READ, (LPSECURITY_ATTRIBUTES) NULL,
                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
                                 (HANDLE) NULL);
 
-  if(TmpHandle == INVALID_HANDLE_VALUE)
+  if(FileHandle == INVALID_HANDLE_VALUE)
     return false;
 
-  if(FileHandle != INVALID_HANDLE_VALUE)
-    CloseHandle(FileHandle);
-  FileHandle = TmpHandle;
   m_filename = filename;
-
   SetFilePointer(FileHandle, NULL, NULL, FILE_BEGIN);
-
   DWORD filesize = GetFileSize(FileHandle, NULL);
-  unsigned long amountread;
-
-  char *filebuffer = new char[filesize];
-
-  // Just read in whole file as char* and cast later.
-
+  unsigned long amountread = 0;
+  CStringA filestr;
+  char* filebuffer = filestr.GetBufferSetLength(filesize+2);
   ReadFile(FileHandle, filebuffer, filesize, &amountread, NULL);
+  filebuffer[amountread] = 0;
+  filebuffer[amountread+1] = 0;
+  long encoding = m_pAppSettings->GetLongParameter(APP_LP_FILE_ENCODING);
+  bool removeBOM = false;
+  if (amountread >= 3 && strncmp(filebuffer, "\xEF\xBB\xBF", 3) == 0) {
+    encoding = Opts::UTF8;
+    removeBOM = true;
+  }
+  if (amountread >= 2 && strncmp(filebuffer, "\xFF\xFE", 2) == 0) {
+    encoding = Opts::UTF16LE;
+    removeBOM = true;
+  }
+  if (amountread >= 2 && strncmp(filebuffer, "\xFE\xFF", 2) == 0) {
+    encoding = Opts::UTF16BE;
+    removeBOM = true;
+  }
 
-  string text;
-  text = text + filebuffer;
-  Tstring inserttext;
-  UTF8string_to_wstring(text, inserttext);
+  wstring inserttext;
+  switch (encoding) {
+  case Opts::UTF8: {
+    UTF8string_to_wstring(filebuffer + (removeBOM ? 3 : 0), inserttext);
+    break;
+  }
+  case Opts::UTF16LE: {
+    inserttext = reinterpret_cast<wchar_t*>(filebuffer+ (removeBOM ? 2 : 0));
+    break;
+  }
+  case Opts::UTF16BE: {
+    wchar_t* widePtr = reinterpret_cast<wchar_t*>(filebuffer + (removeBOM ? 2 : 0));
+    for (unsigned int i = 0; widePtr[i]; i++) {
+      widePtr[i] = _byteswap_ushort(widePtr[i]);
+    }
+    inserttext = widePtr;
+    break;
+  }
+  default:
+    CString wideFromMBCS(filestr); // converts mbcs to wide string
+    inserttext = wideFromMBCS;
+    break;
+  }
   InsertText(inserttext);
 
   m_FilenameGUI->SetFilename(m_filename);
@@ -206,18 +242,6 @@ bool CEdit::TOpen(const Tstring &filename) {
 }
 
 bool CEdit::TSaveAs(const Tstring &filename) {
-  HANDLE TmpHandle = CreateFile(filename.c_str(), GENERIC_READ | GENERIC_WRITE,
-                                FILE_SHARE_READ, (LPSECURITY_ATTRIBUTES) NULL,
-                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
-                                (HANDLE) NULL);
-
-  if(TmpHandle == INVALID_HANDLE_VALUE)
-    return false;
-
-  if(FileHandle != INVALID_HANDLE_VALUE)
-    CloseHandle(FileHandle);
-  FileHandle = TmpHandle;
-
   m_filename = filename;
   if(Save()) {
     m_FilenameGUI->SetFilename(m_filename);
@@ -248,10 +272,6 @@ void CEdit::Clear() {
 }
 
 void CEdit::SetFont(string Name, long Size) {
-#ifndef _WIN32_WCE
-  m_FontName = Name;
-  m_FontSize = Size;
-
   Tstring FontName;
   UTF8string_to_wstring(Name, FontName);
 
@@ -259,25 +279,18 @@ void CEdit::SetFont(string Name, long Size) {
     Size = 14;
 
   DeleteObject(m_Font);
-  if(Name == "")
+  if (Name == "") {
+    UINT CodePage = GetUserCodePage();
     m_Font = GetCodePageFont(CodePage, -Size);
+  }
   else
     m_Font = CreateFont(-Size, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE, FontName.c_str());    // DEFAULT_CHARSET => font made just from Size and FontName
 
   SendMessage(WM_SETFONT, (WPARAM) m_Font, true);
-#else
-  // not implemented
-#pragma message ( "CEdit::SetFot not implemented on WinCE")
-  //DASHER_ASSERT(0);
-#endif
 }
 
 void CEdit::SetInterface(Dasher::CDasherInterfaceBase *DasherInterface) {
   m_pDasherInterface = DasherInterface;
-#ifndef _WIN32_WCE
-  // TODO: What on Earth is this doing here?
-  //SetFont(m_FontName, m_FontSize);
-#endif
 }
 
 void CEdit::output(const std::string &sText) {
@@ -299,11 +312,7 @@ void CEdit::output(const std::string &sText) {
     else {    
       for(std::wstring::iterator it(String.begin()); it != String.end(); ++it) {
         fakekey[0].type = INPUT_KEYBOARD;
-#ifdef _WIN32_WCE
-        fakekey[0].ki.dwFlags = KEYEVENTF_KEYUP;
-#else
         fakekey[0].ki.dwFlags = KEYEVENTF_UNICODE;
-#endif
         fakekey[0].ki.wVk = 0;
         fakekey[0].ki.time = NULL;
         fakekey[0].ki.wScan = *it;
@@ -573,10 +582,8 @@ void CEdit::deletetext(const std::string &sText) {
   // newline pair, but we're now assuming we'll never have two real characters for
   // a single symbol
 
-//  if(targetwindow != NULL && textentry == true) {
 if(m_pAppSettings->GetLongParameter(APP_LP_STYLE) == APP_STYLE_DIRECT) {
 
-#ifdef _UNICODE
     fakekey[0].type = fakekey[1].type = INPUT_KEYBOARD;
     fakekey[0].ki.wVk = fakekey[1].ki.wVk = VK_BACK;
     fakekey[0].ki.time = fakekey[1].ki.time = 0;
@@ -584,11 +591,6 @@ if(m_pAppSettings->GetLongParameter(APP_LP_STYLE) == APP_STYLE_DIRECT) {
 
 	::SetFocus(targetwindow);
     SendInput(2, fakekey, sizeof(INPUT));
-#else
-    SetFocus(targetwindow);
-    keybd_event(VK_BACK, 0, NULL, NULL);
-    keybd_event(VK_BACK, 0, KEYEVENTF_KEYUP, NULL);
-#endif
   }
 
   // And the output buffer (?)

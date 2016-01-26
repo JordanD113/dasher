@@ -32,17 +32,16 @@ Dasher::Settings::bp_table app_boolparamtable[] = {
 #else
   { APP_BP_SHOW_STATUSBAR, "ViewStatusbar", Persistence::PERSISTENT, true, "ViewStatusbar" },
 #endif
-
+{ APP_BP_MIRROR_LAYOUT, "MirrorLayout", Persistence::PERSISTENT, false, "MirrorLayout" },
+{ APP_BP_FULL_SCREEN, "FullScreen", Persistence::PERSISTENT, false, "FullScreen" },
 };
 
 Dasher::Settings::lp_table app_longparamtable[] = {
+  {APP_LP_FILE_ENCODING, "FileEncodingFormat", Persistence::PERSISTENT, -1, "FileEncodingFormat"},
   {APP_LP_EDIT_FONT_SIZE, "EditFontSize", Persistence::PERSISTENT, 0, "EditFontSize"},
-  {APP_LP_EDIT_HEIGHT, "EditHeight", Persistence::PERSISTENT, 75, "The height of the edit window"},
-  {APP_LP_EDIT_WIDTH, "EditWidth", Persistence::PERSISTENT, 200, "EditWidth"},
+  {APP_LP_EDIT_SIZE, "EditSize", Persistence::PERSISTENT, 75, "The size of the edit window"},
   {APP_LP_SCREEN_WIDTH, "ScreenWidth", Persistence::PERSISTENT, 400, "ScreenWidth"},
   {APP_LP_SCREEN_HEIGHT, "ScreenHeight", Persistence::PERSISTENT, 500, "ScreenHeight"},
-  {APP_LP_SCREEN_WIDTH_H, "ScreenWidthH", Persistence::PERSISTENT, 625, "Screen Width for application style compose"},
-  {APP_LP_SCREEN_HEIGHT_H, "ScreenHeightH", Persistence::PERSISTENT, 250, "Screen Height for application style compose"},
   {APP_LP_STYLE, "AppStyle", Persistence::PERSISTENT, 0, "Application style"},
   {APP_LP_X, "XPosition", Persistence::PERSISTENT, 100, "X location of window"},
   {APP_LP_Y, "YPosition", Persistence::PERSISTENT, 100, "Y location of window"},
@@ -57,5 +56,5 @@ Dasher::Settings::sp_table app_stringparamtable[] = {
 #else
   {APP_SP_EDIT_FONT, "EditFont", Persistence::PERSISTENT, "Sans 10", "EditFont"},
 #endif
-  {APP_SP_WINDOW_STATE, "WindowState", Persistence::PERSISTENT, "", "WindowState"},
+{ APP_SP_TOOLBAR_ID, "ToolbarID", Persistence::PERSISTENT, "", "ToolbarID" },
 };
